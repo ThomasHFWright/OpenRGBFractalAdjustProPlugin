@@ -1,0 +1,11 @@
+TEMPLATE = lib
+CONFIG += plugin c++17 link_pkgconfig
+QT += widgets
+TARGET = FractalAdjustProPlugin
+isEmpty(OPENRGB_SOURCE): error("Pass OPENRGB_SOURCE=/path/to/official/OpenRGB")
+INCLUDEPATH += $$OPENRGB_SOURCE $$OPENRGB_SOURCE/RGBController $$OPENRGB_SOURCE/dependencies/json src
+PKGCONFIG += hidapi-hidraw
+SOURCES += src/FractalAdjustProPlugin.cpp src/FractalAdjustProController.cpp
+HEADERS += src/FractalAdjustProPlugin.h src/FractalAdjustProController.h src/FractalAdjustProProtocol.h
+DISTFILES += src/plugin.json
+QMAKE_CXXFLAGS += -Wall -Wextra
