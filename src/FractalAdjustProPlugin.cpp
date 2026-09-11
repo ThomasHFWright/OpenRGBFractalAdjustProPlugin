@@ -1,5 +1,10 @@
 // Experimental RGB-only plugin. AI-generated. SPDX-License-Identifier: GPL-2.0-or-later
 #include <cstdio>
+#include <QFile>
+#include <QDir>
+#include <QFileInfo>
+#include <QSaveFile>
+#include "ProfileManager.h"
 #include "FractalAdjustProPlugin.h"
 
 static_assert(OPENRGB_PLUGIN_API_VERSION == 4, "Build against OpenRGB 1.0rc3.1 (plugin API 4)");
@@ -9,9 +14,9 @@ OpenRGBPluginInfo FractalAdjustProPlugin::GetPluginInfo()
     OpenRGBPluginInfo info{};
     info.Name = "Fractal Adjust Pro";
     info.Description = "Experimental RGB-only Adjust Pro support (firmware 1.1.17)";
-    info.Version = "0.2.0";
+    info.Version = "0.3.0";
     info.URL = "https://github.com/ThomasHFWright/OpenRGBFractalAdjustProPlugin";
-    info.Location = OPENRGB_PLUGIN_LOCATION_INFORMATION;
+    info.Location = OPENRGB_PLUGIN_LOCATION_TOP;
     info.Label = "Fractal Adjust Pro";
     return info;
 }
@@ -30,40 +35,50 @@ FractalAdjustProPlugin::Accessory::Accessory(std::shared_ptr<FractalAdjustProCon
     serial = hub->serial + ":" + std::to_string(accessory.id);
 
     const char* names[] = {"Saved", "Static", "Off", "Breathing", "Color Cycle"};
-    for(unsigned int i = 0; i <= FRACTAL_CYCLE; i++)
+    const char* custom_names[] = {"Shift", "Waves", "Two Color Fade", "Lava Lamp"};
+    for(unsigned int i = 0; i < FractalThemes::ModeCount; i++)
     {
         mode m;
-        m.name = names[i];
+        m.name = i < FractalThemes::FirstMode ? names[i] : i < FractalThemes::Shift ?
+            FractalThemes::themes[i - FractalThemes::FirstMode].name : custom_names[i - FractalThemes::Shift];
         m.value = i;
         m.color_mode = MODE_COLORS_NONE;
         if(i != FRACTAL_SAVED)
         {
             m.flags |= MODE_FLAG_AUTOMATIC_SAVE;
         }
-        if(i == FRACTAL_STATIC || i == FRACTAL_BREATHING || i == FRACTAL_CYCLE)
+        if(i != FRACTAL_SAVED && i != FRACTAL_OFF)
         {
             m.flags |= MODE_FLAG_HAS_BRIGHTNESS;
             m.brightness_min = 0;
             m.brightness_max = 100;
             m.brightness = 100;
         }
-        if(i == FRACTAL_STATIC || i == FRACTAL_BREATHING)
+        if(i == FRACTAL_STATIC || i == FRACTAL_BREATHING || i >= FractalThemes::Shift)
         {
             m.flags |= MODE_FLAG_HAS_MODE_SPECIFIC_COLOR;
             m.color_mode = MODE_COLORS_MODE_SPECIFIC;
-            m.colors_min = m.colors_max = i == FRACTAL_BREATHING ? 2 : 1;
+            m.colors_min = m.colors_max = i == FRACTAL_STATIC ? 1 : i == FractalThemes::Shift || i == FractalThemes::LavaLamp ? 6 : 2;
             m.colors.resize(m.colors_min, ToRGBColor(255, 0, 0));
             if(i == FRACTAL_BREATHING)
             {
                 m.colors[1] = ToRGBColor(0, 0, 255);
             }
         }
-        if(i == FRACTAL_BREATHING || i == FRACTAL_CYCLE)
+        if(i >= FractalThemes::Shift)
+        {
+            unsigned int preset = i == FractalThemes::Shift ? 0 : i == FractalThemes::Waves ? 3 : i == FractalThemes::TwoColorFade ? 5 : 8;
+            const auto& theme = FractalThemes::themes[preset];
+            for(unsigned int c = 0; c < m.colors.size(); c++)
+                m.colors[c] = ToRGBColor(theme.colors[c * 3], theme.colors[c * 3 + 1], theme.colors[c * 3 + 2]);
+        }
+        if(i == FractalThemes::Waves) m.direction = FractalThemes::Wave{}.Pack();
+        if(i == FRACTAL_BREATHING || i == FRACTAL_CYCLE || i >= FractalThemes::FirstMode)
         {
             m.flags |= MODE_FLAG_HAS_SPEED;
             m.speed_min = 0;
             m.speed_max = 100;
-            m.speed = 50;
+            m.speed = i >= FractalThemes::FirstMode && i < FractalThemes::Shift ? FractalThemes::themes[i - FractalThemes::FirstMode].speed : i == FractalThemes::Waves ? 3 : 50;
         }
         modes.push_back(m);
     }
@@ -71,6 +86,7 @@ FractalAdjustProPlugin::Accessory::Accessory(std::shared_ptr<FractalAdjustProCon
     active_mode = current.mode;
     modes[active_mode].brightness = current.brightness;
     modes[active_mode].speed = current.speed;
+    if(active_mode == (int)FractalThemes::Waves) modes[active_mode].direction = current.wave.Pack();
     for(unsigned int i = 0; i < modes[active_mode].colors.size(); i++)
     {
         modes[active_mode].colors[i] = ToRGBColor(current.colors[i * 3], current.colors[i * 3 + 1], current.colors[i * 3 + 2]);
@@ -88,28 +104,53 @@ FractalAdjustProPlugin::Accessory::Accessory(std::shared_ptr<FractalAdjustProCon
         leds.push_back(l);
     }
     SetupColors();
+    last_applied = ModeSettings();
+}
+
+std::vector<unsigned int> FractalAdjustProPlugin::Accessory::ModeSettings() const
+{
+    if(active_mode < 0 || active_mode >= (int)modes.size()) return {};
+    const mode& m = modes[active_mode];
+    std::vector<unsigned int> settings = {(unsigned int)active_mode,
+        m.flags & MODE_FLAG_HAS_BRIGHTNESS ? m.brightness : 100,
+        m.flags & MODE_FLAG_HAS_SPEED ? m.speed : 100,
+        active_mode == (int)FractalThemes::Waves ? m.direction : 0};
+    settings.insert(settings.end(), m.colors.begin(), m.colors.end());
+    return settings;
+}
+
+void FractalAdjustProPlugin::Accessory::UpdateLEDs()
+{
+    // API 4 SDK profile loads only call UpdateLEDs. Apply changed mode settings once;
+    // per-LED notifications and the extra notification after UpdateMode do not save again.
+    if(ModeSettings() != last_applied) DeviceUpdateMode();
 }
 
 void FractalAdjustProPlugin::Accessory::DeviceUpdateMode()
 {
-    if(active_mode < FRACTAL_SAVED || active_mode > FRACTAL_CYCLE) return;
+    last_update_ok = false;
+    if(active_mode < FRACTAL_SAVED || active_mode >= (int)FractalThemes::ModeCount) return;
     const mode m = modes[active_mode];
     const unsigned int count = m.colors.size();
-    if((active_mode == FRACTAL_STATIC && count != 1) || (active_mode == FRACTAL_BREATHING && count != 2) || count > 2)
+    if((active_mode == FRACTAL_STATIC && count != 1) || (active_mode == FRACTAL_BREATHING && count != 2) ||
+       (active_mode >= (int)FractalThemes::Shift && count != (active_mode == (int)FractalThemes::Shift || active_mode == (int)FractalThemes::LavaLamp ? 6U : 2U)) || count > 6)
     {
         std::fprintf(stderr, "[Fractal Adjust Pro] Invalid mode color count\n");
         return;
     }
-    unsigned char colors[6] = {};
+    unsigned char colors[18] = {};
     for(unsigned int i = 0; i < count; i++)
     {
         colors[i * 3] = RGBGetRValue(m.colors[i]);
         colors[i * 3 + 1] = RGBGetGValue(m.colors[i]);
         colors[i * 3 + 2] = RGBGetBValue(m.colors[i]);
     }
-    if(!hub->Apply(index, active_mode,
+    last_update_ok = hub->Apply(index, active_mode,
                    m.flags & MODE_FLAG_HAS_BRIGHTNESS ? m.brightness : 100,
-                   m.flags & MODE_FLAG_HAS_SPEED ? m.speed : 100, colors, count))
+                   m.flags & MODE_FLAG_HAS_SPEED ? m.speed : 100, colors, count,
+                   active_mode == (int)FractalThemes::Waves ? FractalThemes::Wave::Unpack(m.direction) : FractalThemes::Wave{});
+    if(last_update_ok) last_applied = ModeSettings();
+    if(!last_update_ok)
     {
         std::fprintf(stderr, "[Fractal Adjust Pro] Failed to apply mode to %s\n", name.c_str());
     }
@@ -145,6 +186,7 @@ void FractalAdjustProPlugin::Load(ResourceManagerInterface* api_ptr)
         }
     }
     hid_free_enumeration(devices);
+    MigrateProfiles();
 }
 
 void FractalAdjustProPlugin::Unload()
@@ -158,15 +200,57 @@ void FractalAdjustProPlugin::Unload()
     api = nullptr;
 }
 
-QWidget* FractalAdjustProPlugin::GetWidget()
+
+void FractalAdjustProPlugin::MigrateProfiles()
 {
-    auto* label = new QLabel(QString("%1 RGB accessories connected.\n\n"
-        "Use the Devices tab for lighting and Profiles to save settings.\n"
-        "Close the Fractal browser app before controlling the hub.\n"
-        "After reconnecting the hub, disable and enable this plugin to detect it again.")
-        .arg(accessories.size()));
-    label->setWordWrap(true);
-    label->setAlignment(Qt::AlignTop | Qt::AlignLeft);
-    label->setMargin(16);
-    return label;
+    // The release host only restores mode settings when mode counts match.
+    // Extend v0.2 profiles without applying them or losing their existing settings.
+    auto* manager = api->GetProfileManager();
+    for(const auto& name : manager->profile_list)
+    {
+        const QString path = QString::fromStdString((api->GetConfigurationDirectory() / (name + ".orp")).string());
+        QFile original(path);
+        if(!original.open(QIODevice::ReadOnly)) continue;
+        const QByteArray prefix = original.read(20);
+        const QByteArray expected("OPENRGB_PROFILE\0\5\0\0\0", 20);
+        original.close();
+        if(prefix != expected) continue;
+        auto controllers = manager->LoadProfileToList(name);
+        bool changed = false;
+        for(auto* saved : controllers)
+        {
+            if(saved->modes.size() != 5 || saved->active_mode < 0 || saved->active_mode >= 5) continue;
+            for(const auto& live : accessories)
+            {
+                if(saved->serial != live->serial || saved->name != live->name || saved->vendor != live->vendor) continue;
+                bool compatible = true;
+                for(unsigned int i = 0; i < 5; i++)
+                    compatible &= saved->modes[i].name == live->modes[i].name && saved->modes[i].value == live->modes[i].value;
+                if(!compatible) continue;
+                saved->modes.insert(saved->modes.end(), live->modes.begin() + 5, live->modes.end());
+                changed = true;
+                break;
+            }
+        }
+        if(changed)
+        {
+            const QString backup_dir = QString::fromStdString((api->GetConfigurationDirectory() / "before-fractal-v0.3").string());
+            QDir().mkpath(backup_dir);
+            const QString backup = backup_dir + "/" + QFileInfo(path).fileName();
+            QSaveFile output(path);
+            bool ok = !QFile::exists(backup) && QFile::copy(path, backup) && output.open(QIODevice::WriteOnly);
+            if(ok) ok = output.write(prefix) == prefix.size();
+            for(auto* saved : controllers)
+            {
+                if(!ok) break;
+                std::unique_ptr<unsigned char[]> data(saved->GetDeviceDescription(5));
+                unsigned int size;
+                std::memcpy(&size, data.get(), sizeof(size));
+                ok = output.write(reinterpret_cast<char*>(data.get()), size) == size;
+            }
+            if(ok) ok = output.commit();
+            if(!ok) std::fprintf(stderr, "[Fractal Adjust Pro] Could not migrate profile %s; original retained\n", name.c_str());
+        }
+        for(auto* saved : controllers) delete saved;
+    }
 }

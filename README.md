@@ -4,9 +4,9 @@ Experimental, AI-generated **RGB-only** support for the Fractal Adjust Pro hub,
 loaded through OpenRGB's plugin manager. No patched OpenRGB controller or upstream
 merge request is required. GPL-2.0-or-later.
 
-The plugin exposes each connected accessory in the normal **Devices** tab, with
-Off, Static, two-color Breathing, Color Cycle, and Saved modes. Brightness, effect
-speed, independent accessory control, and OpenRGB profiles are supported.
+The **Fractal Adjust Pro** tab provides one-click themes, custom hardware lighting,
+saved scenes, and startup effects. Each accessory also appears in **Devices**.
+Animations run on the hub and continue after OpenRGB closes.
 
 ## Install with the normal OpenRGB release
 
@@ -16,13 +16,13 @@ The downloaded Linux x86-64 AppImage was used for live validation. OpenRGB itsel
 needs no source changes or custom build.
 
 Download `libFractalAdjustProPlugin.so` from the
-[v0.2.0 release](https://github.com/ThomasHFWright/OpenRGBFractalAdjustProPlugin/releases/tag/v0.2.0).
+[v0.3.0 release](https://github.com/ThomasHFWright/OpenRGBFractalAdjustProPlugin/releases/tag/v0.3.0).
 Open OpenRGB, choose **Settings → Plugins → Install Plugin**, select the library,
 and enable it. Accessories appear in **Devices**. With OpenRGB closed, copying the
 library into `~/.config/OpenRGB/plugins/` is an alternative.
 
 - Linux HID `36bc:1001`, firmware **1.1.17**. Other firmware is refused.
-- Plugin v0.2.0 targets API 4 / Qt 5. It does not load into API 5 development builds
+- Plugin v0.3.0 targets API 4 / Qt 5. It does not load into API 5 development builds
   or OpenRGB 0.9's API 3. The older v0.1.0 plugin targeted development API 5.
 - The binary was built on Linux x86-64 with Qt 5.15.19, GCC 16 and glibc 2.44, and
   tested with the official AppImage on that machine. Build the plugin from source
@@ -59,18 +59,38 @@ The output is `build/libFractalAdjustProPlugin.so`.
 
 ## Controls and profiles
 
-| Mode | Controls | Behavior |
-| --- | --- | --- |
-| Off | None | Turns the selected accessory off |
-| Static | One color, brightness | Uniform color on that accessory |
-| Breathing | Two colors, brightness, speed | Hardware-executed two-color breathing |
-| Color Cycle | Brightness, speed | Uniform six-color cycle; no spatial rainbow |
-| Saved | None | Cancels a vendor hover preview and resumes current saved lighting |
+Select accessories in the **Fractal Adjust Pro** tab, then click a theme:
+Northern lights, Summer sky, Sunset, Starfall, Glistening ice, Pink sapphire,
+Lunar mist, Mystic night, Campfire, or Radiant dawn. Set brightness before applying.
 
-Ordinary mode changes save the selected accessory's **regular lighting**, matching
-the vendor app's Apply action. They do not change startup lighting. Saved does not
-undo those changes. Profiles store supported mode parameters, not arbitrary vendor
-programs or a backup of hub flash. Unimplemented vendor presets are shown as Saved.
+**Custom lighting** offers Shift, Still, Breathe, Waves, Two color fade, and Lava
+lamp, with all 28 regular starting presets from the pinned vendor app. Edit RGB
+colors, brightness and animation speed; Waves also exposes ramp-up, wave LED count,
+ramp-down and frequency. Changes are sent when you click **Apply custom lighting**.
+**Read highlighted accessory** copies its current regular settings into the editor.
+
+The normal Devices tab retains Saved, Static, Off, Breathing and Color Cycle,
+and adds the ten themes plus Shift, Waves, Two Color Fade and Lava Lamp. Static
+corresponds to Still and Breathing to Breathe. Color Cycle is the original uniform
+six-color cycle. Saved cancels a vendor hover preview and resumes currently saved
+lighting; it does not undo ordinary Apply operations.
+
+**Save current scene** and **Load scene** use native OpenRGB profiles, including
+all OpenRGB devices. Wave shape is preserved in profiles. Existing v0.2 `.orp`
+profiles are upgraded automatically, with originals retained in
+`~/.config/OpenRGB/before-fractal-v0.3/`. Profiles store supported regular mode
+parameters, not arbitrary vendor programs or a backup of hub flash. Unknown vendor
+presets appear as Saved.
+
+**Startup effect** independently saves Meshify effect, Fade in, No effect (instant
+color), or RGB Off to the selected accessories, with color and brightness controls.
+Use **Read highlighted accessory** to inspect the existing startup setting.
+Regular scenes do not include or overwrite startup lighting. Startup writes and
+readback have been tested; animation appearance and retention across a complete
+power cycle still require physical verification.
+
+Ordinary changes save the selected accessory's regular lighting, matching the
+vendor app's Apply action. These are configuration uploads, not streamed frames.
 
 Use the normal OpenRGB **Save Profile** and **Load Profile** controls. Release profiles
 use `.orp`; development-build JSON profiles are not directly compatible. For command
@@ -88,7 +108,7 @@ openrgb --client 127.0.0.1:6742 --noautoconnect \
 
 There is no Direct/per-LED streaming mode, so the Effects plugin's Direct-mode
 effects are unsupported. No fan control, telemetry, firmware updates, resets,
-ownership switches, or startup-effect editing is included. Power-cycle retention
+or ownership switches are included. Power-cycle retention
 and other operating systems remain untested.
 
 ## Validation and provenance
@@ -102,4 +122,15 @@ See [live validation](docs/validation.md), [protocol notes](docs/protocol.md), a
 The protocol and transport originated in the
 [experimental built-in driver](https://github.com/ThomasHFWright/OpenRGB/tree/fractal-adjust-pro-rgb/Controllers/FractalAdjustProController);
 the plugin reuses that tested encoder and transport with an API 4 adapter.
-Vendor JavaScript is neither distributed nor executed.
+The plugin does not distribute or execute vendor JavaScript. Its independent C++
+encoders are checked against 1,800 outputs from the pinned vendor bundle. For the
+optional reference comparison, supply that bundle locally (the test executes its
+encoder module without browser or HID access):
+
+```sh
+node tests/verify_vendor.cjs /path/to/main.e2372c083cc6b94f.js
+```
+
+Lava lamp uses a repeatable random phase so profiles replay consistently; the
+vendor app chooses a fresh random phase. This can change the initial arrangement,
+while retaining the same hardware animation and palette.

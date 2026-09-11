@@ -10,6 +10,7 @@
 #include <cstring>
 #include <string>
 #include <vector>
+#include "FractalAdjustProThemes.h"
 
 #define FRACTAL_REPORT_SIZE 64
 #define FRACTAL_CHUNK_SIZE  60
@@ -36,7 +37,8 @@ struct FractalAdjustProEffect
     unsigned int mode = FRACTAL_SAVED;
     unsigned int brightness = 100;
     unsigned int speed = 100;
-    unsigned char colors[6] = {};
+    unsigned char colors[18] = {};
+    FractalThemes::Wave wave;
 };
 
 class FractalAdjustProProtocol
@@ -52,7 +54,23 @@ public:
         const unsigned char* metadata = reply + 11;
         if(metadata[0] != 153)
         {
-            return true; // Vendor saved preset: resume it rather than reconstruct it.
+            for(unsigned int i = 0; i < FractalThemes::Count; i++)
+            {
+                const auto& theme = FractalThemes::themes[i];
+                if(metadata[0] != theme.preset) continue;
+                unsigned int brightness_offset = theme.kind == 7 ? 13 : theme.kind == 8 ? 10 : 21;
+                unsigned int brightness = metadata[brightness_offset], speed = metadata[2];
+                if(brightness > 100 || speed > 100) return false;
+                const auto expected = FractalThemes::Metadata(theme, brightness, speed);
+                if(std::equal(expected.begin(), expected.end(), metadata))
+                {
+                    effect.mode = FractalThemes::FirstMode + i;
+                    effect.brightness = brightness;
+                    effect.speed = speed;
+                }
+                break;
+            }
+            return true; // Unrecognized/modified vendor presets remain Saved.
         }
         unsigned int color_count = 1;
         switch(metadata[1])
@@ -65,18 +83,36 @@ public:
             const unsigned char palette[] = {255,0,0,255,255,0,0,255,0,0,255,255,0,0,255,255,0,255};
             if(std::memcmp(metadata + 3, palette, sizeof(palette)) != 0)
             {
-                return false; // An unknown preview cannot be reconstructed losslessly.
+                effect.mode = FractalThemes::Shift;
+                color_count = 6;
+                break;
             }
             effect.mode = FRACTAL_CYCLE;
             color_count = 6;
             break;
         }
+        case 6: effect.mode = FractalThemes::LavaLamp; color_count = 6; break;
+        case 7: effect.mode = FractalThemes::Waves; color_count = 2; break;
+        case 8: effect.mode = FractalThemes::TwoColorFade; color_count = 2; break;
         default: return false;
         }
         effect.speed = metadata[2];
         effect.brightness = metadata[3 + color_count * 3];
-        std::memcpy(effect.colors, metadata + 3, std::min(color_count, 2U) * 3);
-        return effect.speed <= 100 && effect.brightness <= 100;
+        std::memcpy(effect.colors, metadata + 3, color_count * 3);
+        if(effect.mode == FractalThemes::Waves)
+        {
+            if(metadata[12] > 100) return false;
+            effect.wave = {metadata[9], metadata[10], metadata[11], 100U - metadata[12]};
+            effect.brightness = metadata[13];
+        }
+        if(effect.mode == FractalThemes::TwoColorFade) effect.brightness = metadata[10];
+        if(effect.speed > 100 || effect.brightness > 100 || !effect.wave.Valid()) return false;
+        if(effect.mode >= FractalThemes::Shift)
+        {
+            const auto expected = FractalThemes::Metadata(FractalThemes::Custom(effect.mode, effect.colors), effect.brightness, effect.speed, effect.wave);
+            return std::equal(expected.begin(), expected.end(), metadata);
+        }
+        return true;
     }
 
     static bool ValidReply(const unsigned char* reply, int length, unsigned char family, unsigned char command)
@@ -142,14 +178,30 @@ public:
 
     static bool Effect(unsigned int mode, unsigned int leds, unsigned int brightness, unsigned int speed,
                        const unsigned char* colors, unsigned int color_count,
-                       std::vector<unsigned char>& header, std::vector<unsigned char>& program)
+                       std::vector<unsigned char>& header, std::vector<unsigned char>& program,
+                       unsigned int rotation = 0, bool mirror = false, FractalThemes::Wave wave = {})
     {
         header.clear();
         program.clear();
-        if(mode > FRACTAL_CYCLE || leds == 0 || leds > 255 || brightness > 100 || speed > 100 ||
+        if(mode >= FractalThemes::ModeCount || !wave.Valid() || rotation > 7 || leds == 0 || leds > 255 || brightness > 100 || speed > 100 ||
            ((mode == FRACTAL_STATIC || mode == FRACTAL_BREATHING) && (!colors || color_count < (mode == FRACTAL_BREATHING ? 2U : 1U))))
         {
             return false;
+        }
+        if(mode >= FractalThemes::FirstMode)
+        {
+            const unsigned int count = mode == FractalThemes::Shift || mode == FractalThemes::LavaLamp ? 6 : 2;
+            if(mode >= FractalThemes::Shift && (!colors || color_count != count)) return false;
+            const auto theme = mode < FractalThemes::Shift ? FractalThemes::themes[mode - FractalThemes::FirstMode] : FractalThemes::Custom(mode, colors);
+            FractalThemes::Encode(theme, leds, brightness, speed, rotation, mirror, program);
+            const auto metadata = FractalThemes::Metadata(theme, brightness, speed, mode == FractalThemes::Waves ? wave : FractalThemes::Wave{});
+            header.assign(FRACTAL_REPORT_SIZE, 0);
+            header[0] = 2; header[1] = 0xA4; header[2] = 0x11; header[3] = 1;
+            for(unsigned char value : program) header[4] += value;
+            header[5] = program.size() >> 8; header[6] = program.size() & 255;
+            header[7] = 1; header[8] = 1;
+            std::copy(metadata.begin(), metadata.end(), header.begin() + 9);
+            return true;
         }
         unsigned char palette[6][3] = {};
         if(mode == FRACTAL_SAVED)

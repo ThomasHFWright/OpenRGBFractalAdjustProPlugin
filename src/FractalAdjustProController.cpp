@@ -117,7 +117,7 @@ bool FractalAdjustProController::ReadEffects()
 }
 
 bool FractalAdjustProController::Apply(unsigned int target, unsigned int mode, unsigned int brightness, unsigned int speed,
-                                      const unsigned char* colors, unsigned int color_count)
+                                      const unsigned char* colors, unsigned int color_count, FractalThemes::Wave wave)
 {
     if(target >= targets.size())
     {
@@ -125,7 +125,7 @@ bool FractalAdjustProController::Apply(unsigned int target, unsigned int mode, u
     }
     std::vector<unsigned char> header;
     std::vector<unsigned char> program;
-    if(!FractalAdjustProProtocol::Effect(mode, targets[target].leds, brightness, speed, colors, color_count, header, program))
+    if(!FractalAdjustProProtocol::Effect(mode, targets[target].leds, brightness, speed, colors, color_count, header, program, 0, false, wave))
     {
         return false;
     }
@@ -137,11 +137,27 @@ bool FractalAdjustProController::Apply(unsigned int target, unsigned int mode, u
         return false;
     }
     unsigned char select[FRACTAL_REPORT_SIZE] = {2, 0xA4, 0x0A, 1, targets[target].id};
+    if(!Exchange(select, reply)) return false;
+    if(mode >= FractalThemes::FirstMode)
+    {
+        // Spatial programs must respect existing orientation without changing it.
+        if(!Query(0xA4, 0x16, 0, reply) || reply[4] > 7) return false;
+        unsigned int rotation = reply[4];
+        if(!Query(0xA4, 0x18, 0, reply) || reply[4] > 1) return false;
+        if(!FractalAdjustProProtocol::Effect(mode, targets[target].leds, brightness, speed, colors, color_count,
+                                             header, program, rotation, reply[4] != 0, wave)) return false;
+    }
     if(mode != FRACTAL_SAVED)
     {
         header[7] = 0; // Normal Apply: commit the selected accessory, not the shared hover preview.
     }
-    if(!Exchange(select, reply) || !Exchange(header.data(), reply))
+    return Upload(header, program, mode != FRACTAL_SAVED);
+}
+
+bool FractalAdjustProController::Upload(const std::vector<unsigned char>& header, const std::vector<unsigned char>& program, bool commit)
+{
+    unsigned char reply[FRACTAL_REPORT_SIZE];
+    if(!Exchange(header.data(), reply))
     {
         return false;
     }
@@ -153,13 +169,45 @@ bool FractalAdjustProController::Apply(unsigned int target, unsigned int mode, u
             return false;
         }
     }
-    if(mode != FRACTAL_SAVED)
+    if(commit)
     {
         // Like the vendor Apply action, save once per mode change, never per frame.
-        if(!Query(0xA4, 0x13, 0, reply) || !Query(0xA4, 0x78, 0, reply))
+        if(!Query(0xA4, 0x13, 0, reply))
         {
             return false;
         }
     }
+    if(header[7] == 0 && !Query(0xA4, 0x78, 0, reply)) return false;
     return true;
+}
+
+bool FractalAdjustProController::ReadStartup(unsigned int target, FractalStartupEffect& effect)
+{
+    if(target >= targets.size()) return false;
+    std::lock_guard<std::mutex> lock(mutex);
+    unsigned char reply[FRACTAL_REPORT_SIZE];
+    unsigned char select[FRACTAL_REPORT_SIZE] = {2, 0xA4, 0x0A, 1, targets[target].id};
+    if(!Exchange(select, reply) || !Query(0xA4, 0x05, 0, reply)) return false;
+    FractalStartupEffect current;
+    current.preset = reply[11]; current.kind = reply[12]; current.brightness = reply[17];
+    std::copy_n(reply + 14, 3, current.color);
+    std::vector<unsigned char> header, program;
+    if(reply[13] != 100 || !FractalStartupPacket(current, targets[target].leds, header, program)) return false;
+    if(!std::equal(header.begin() + 9, header.begin() + 16, reply + 11)) return false;
+    effect = current;
+    return true;
+}
+
+bool FractalAdjustProController::ApplyStartup(unsigned int target, const FractalStartupEffect& effect)
+{
+    if(target >= targets.size()) return false;
+    std::vector<unsigned char> header, program;
+    if(!FractalStartupPacket(effect, targets[target].leds, header, program)) return false;
+    std::lock_guard<std::mutex> lock(mutex);
+    unsigned char reply[FRACTAL_REPORT_SIZE];
+    if(!Query(0xA4, 0x1A, 0, reply) || reply[4] != 0) return false;
+    unsigned char select[FRACTAL_REPORT_SIZE] = {2, 0xA4, 0x0A, 1, targets[target].id};
+    if(!Exchange(select, reply)) return false;
+    // Vendor InstantBootEffect saves its zero-length header directly; no chunks or commit.
+    return Upload(header, program, effect.kind != 5);
 }

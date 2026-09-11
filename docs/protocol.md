@@ -2,7 +2,7 @@
 
 Hardware: `36bc:1001`, firmware `1.1.17`, interface 0, vendor usage page `ff00`, usage 1. HID descriptor: `0600ff0901a100150025ff26ff0085020600ff953f75080901910209018102c0`.
 
-Reference: https://adjust.fractal-design.com/main.e2372c083cc6b94f.js, SHA256 `1916df59569691fef1981e3b68c53186857804ba7e85c44bcc72251bee2478a4`. Freshly fetched reference matches the portable app bundle. The implementation independently encodes the observed protocol; it does not distribute or execute vendor JavaScript. AI-generated implementation.
+Reference: https://adjust.fractal-design.com/main.e2372c083cc6b94f.js, SHA256 `1916df59569691fef1981e3b68c53186857804ba7e85c44bcc72251bee2478a4`. Freshly fetched reference matches the portable app bundle. The implementation independently encodes the observed protocol; the plugin does not distribute or execute vendor JavaScript. An optional reference test executes the pinned local encoder module without HID access. AI-generated implementation.
 
 Upstream base: `728846f66861dd1cb7dc04835f651830d6ef13ce`. Original built-in driver source: `c308a122095d137a3fd0c27278ea42d80e5b6d96`.
 
@@ -17,12 +17,12 @@ All requests and replies are 64 bytes including report ID `02`; unused bytes are
 | `a4 0a 01 ID` | Select an accessory | Zero-status acknowledgment |
 | `a4 0e 00` | Name of selected accessory | Byte length at 4, UTF-8 bytes at 5 |
 | `a4 05 01 00 00` | Regular lighting metadata | Metadata at report offset 11 |
-| `a4 05 00 00 00` | Startup metadata (validation only) | Metadata at report offset 11 |
+| `a4 05 00 00 00` | Startup metadata | Metadata at report offset 11 |
 | `a4 1a` | Dynamic Lighting query | Boolean at 4; active/unreadable refuses writes |
-| `a4 16`, `a4 18` | Rotation/mirror queries (validation only) | Value at 4 |
+| `a4 16`, `a4 18` | Rotation/mirror queries | Value at 4 |
 | `a4 14`, `a4 1b` | ARGB generation/compatibility (validation only) | Port data following status |
 
-Selection is a transport cursor. No getter was found; enumeration leaves the last accessory selected as the vendor app does. Every driver update selects its own target while holding the shared HID mutex. No cooling, firmware upgrade/reset, ownership, orientation, ARGB configuration or startup-writing operation is used.
+Selection is a transport cursor. No getter was found; enumeration leaves the last accessory selected as the vendor app does. Every driver update selects its own target while holding the shared HID mutex. No cooling, firmware upgrade/reset, ownership, orientation, ARGB configuration operation is used. Startup writes are explicitly separate from regular lighting.
 
 Topology is 11 selectors / 265 LEDs: `01/02/03/04/11/12/13` have 20 LEDs, `21` has 11 ARGB1 LEDs, `31/32/33` have 3/35/76 ARGB2 LEDs. Zero generation byte means ARGB2. Physical port is high nibble + 1. Vendor UI groups the three last targets as Meshify 3 XL. The legacy chain is not assumed independently addressable per accessory. [Initial captures](baseline-queries.json) and [name/effect captures](effect-queries.json) contain actual device replies, not generated fixtures.
 
@@ -52,7 +52,7 @@ Read-effect replies show active preview metadata while hovering, not exclusively
 
 ## Encoder expectations
 
-Metadata starts with preset, kind, speed, colors, brightness. Custom preset is 153; kinds 1/10/2/0 represent Static/Off/Breathing/Color Cycle in this driver. Only the exact six-color palette of this driver's cycle is recognized on readback.
+Metadata starts with preset, kind, speed, colors, brightness. Custom preset is 153; kinds 1/10/2/0 represent Static/Off/Breathing/Color Cycle in this driver. The original uniform cycle is identified by its exact six-color palette; other custom kind-0 palettes are Shift.
 
 Three-LED full-red Static uses timestamps `0000`, `0232`, `0464`, each followed by `ff0000` three times. Length is 33, checksum `93`. Normal Apply header prefix is `02 a4 11 01 93 00 21 00 01 99 01 64 ff 00 00 64`. These independently derived literal bytes are regression expectations, not hardware captures. The regression also exercises the same header with preview=1 for cancellation/preview validation.
 
@@ -63,3 +63,56 @@ Breathing uses nine keyframes and two colors, with speed scaling traced from the
 `./check.sh` passes against the actual controller transport with mocked HID, including timeout/disconnect, wrong command, malformed/status-error replies, failure at each upload stage, single commit and no cooling commands. The original Linux baseline and built-in driver builds passed. The plugin uses the same encoder and transport (with standalone logging). Exact CLI commands and acknowledgment counts are in [the validation record](validation.md).
 
 Real hardware: restricted discovery, independent Static readback, all-target brightness 0/25/75, targeted Off, Breathing speed 25/75, mixed-animation save/load, and Saved preview cancellation pass packet/readback checks. Startup metadata, rotation and mirroring match all pre-test snapshots. User visually confirmed single red Static, the original preview-targeting failure, and the final independent red/blue Breathing and rainbow Color Cycle continuing after CLI exit while the remaining accessories stayed blue. Brightness 0/25/75 was verified by acknowledged packets and readback. Finally, the Off profile was loaded and all eleven states matched the saved Off snapshot exactly. No unplug, reboot, power-cycle or cooling experiment occurred.
+
+
+## v0.3 hardware themes and custom lighting
+
+`FractalAdjustProThemes.h` holds the factual palettes and defaults from the pinned
+vendor application: ten named themes and eighteen additional regular starting
+presets. Kinds 0/1/2/7/8/6 correspond to Shift/Still/Breathe/Waves/Two color fade/Lava
+lamp. Custom edits use preset 153. Named presets retain their vendor preset ID.
+The original five OpenRGB mode indices remain stable; ten named and four custom
+modes append to them, for nineteen total.
+
+Shift uploads spatial gradients with interpolated boundary frames. Lava lamp uses
+14 generated frames plus the initial frame, with a deterministic phase seed for
+repeatable profiles. Two color fade uploads a static spatial gradient twice at
+0 and 20000; the firmware drives movement. A single-LED two-color gradient uses
+the first color explicitly (the vendor's degenerate formula is undefined).
+All spatial programs read and honor existing rotation/mirroring without writing
+those settings. Three-LED and 76-LED case components follow the vendor's special
+layout handling. RGB rounding is checked against the reference encoder.
+
+Wave metadata includes two colors, ramp-up, width, ramp-down, `100-frequency`,
+brightness, and the brightness-scaled second color. Ramp/width values are 0–25;
+frequency is 0–100. The API 4 mode structure has no custom parameter extension,
+so the Waves mode packs those four values into its serialized `direction` word,
+low byte first. It does not advertise the direction flag; the plugin editor exposes
+the four named controls. Native `.orp` files and SDK mode packets retain this word.
+
+API 4 profile loading checks the number of modes. The plugin upgrades matching
+five-mode v0.2 profiles by appending the new modes using the host's native profile
+serializer, with an original backup and atomic replacement. Existing mode settings
+are retained. API 4 SDK profile loads notify through `UpdateLEDs`; the adapter
+applies changed mode settings there, avoiding a second save after `UpdateMode`.
+Per-LED color writes remain unsupported.
+
+## Startup slot
+
+Startup uploads use the same selected-accessory transport and framing, with
+header offset 3 set to **0**, preview 0 and target count 1. Metadata is preset,
+kind, fixed speed 100, RGB color and brightness. Supported hub kinds are Meshify
+3, Fade in 4, Instant 5 and Off 10. Other device-specific startup families are not
+advertised for this hub.
+
+Meshify has six frames at 0/138/178/218/258/318; Fade in has four at 0/80/130/150.
+Off has three black frames. Instant is special: the vendor sends a zero-length
+header and end-loading command, with **no chunks or commit**. Live readback confirms
+this path saves the startup metadata. Other kinds use chunks, one commit and
+end-loading. Startup saves never overwrite regular slot 1. Loading regular profiles
+does not write startup settings.
+
+All four kinds were written to every accessory and read back successfully, then
+the original Meshify/white/50% startup metadata was restored exactly. Regular
+metadata and orientation remained unchanged. This proves the command/save/readback
+path, not the animation's appearance or power-cycle retention.

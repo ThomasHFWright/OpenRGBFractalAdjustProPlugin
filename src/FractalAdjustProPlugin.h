@@ -19,6 +19,7 @@ public:
     QMenu* GetTrayMenu() override { return nullptr; }
 
 private:
+    void MigrateProfiles();
     struct Accessory : RGBController
     {
         Accessory(std::shared_ptr<FractalAdjustProController> hub_ptr, unsigned int target);
@@ -30,9 +31,12 @@ private:
         void DeviceUpdateMode() override;
         // Configuration uploads are synchronous: no queued HID work can outlive this plugin.
         void UpdateMode() override { DeviceUpdateMode(); }
-        void UpdateLEDs() override {} // No per-LED/Direct mode; profiles also call this hook.
+        void UpdateLEDs() override; // SDK profile loads notify through this hook.
+        std::vector<unsigned int> ModeSettings() const;
+        std::vector<unsigned int> last_applied;
         std::shared_ptr<FractalAdjustProController> hub;
         unsigned int index;
+        bool last_update_ok = true;
     };
     ResourceManagerInterface* api = nullptr;
     std::vector<std::unique_ptr<Accessory>> accessories;
