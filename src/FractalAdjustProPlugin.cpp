@@ -13,8 +13,8 @@ OpenRGBPluginInfo FractalAdjustProPlugin::GetPluginInfo()
 {
     OpenRGBPluginInfo info{};
     info.Name = "Fractal Adjust Pro";
-    info.Description = "Experimental RGB-only Adjust Pro support (firmware 1.1.17)";
-    info.Version = "0.4.0";
+    info.Description = "Experimental RGB-only Adjust Pro support (firmware 1.1.0+)";
+    info.Version = "0.4.1";
     info.URL = "https://github.com/ThomasHFWright/OpenRGBFractalAdjustProPlugin";
     info.Location = OPENRGB_PLUGIN_LOCATION_TOP;
     info.Label = "Fractal Adjust Pro";

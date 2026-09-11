@@ -17,6 +17,7 @@ static unsigned char selected = 1;
 static std::vector<std::vector<unsigned char>> features;
 static int feature_count = 20, feature_length = 23, feature_fail = 0;
 static bool autonomous = true;
+static std::string firmware = "1.1.17";
 int hid_get_feature_report(hid_device*, unsigned char* data, size_t length)
 {
     assert(length == 23 && data[0] == 3);
@@ -47,7 +48,7 @@ int hid_read_timeout(hid_device*, unsigned char* data, size_t length, int millis
     if(fault == 4) return 3;
     if(fault == 5) data[3] = 1;
     if(fault == 6) { data[2] ^= 1; fault = 2; return 64; }
-    if(data[1] == 0xF1 && data[2] == 1) std::memcpy(data + 4, "1.1.17", 7);
+    if(data[1] == 0xF1 && data[2] == 1) std::memcpy(data + 4, firmware.c_str(), std::min(size_t(16), firmware.size() + 1));
     if(data[1] == 0xA4 && data[2] == 0x1A) data[4] = !autonomous;
     if(data[1] == 0xA4 && data[2] == 8)
     {
@@ -347,5 +348,19 @@ int main(int argc, char** argv)
     assert(FractalAdjustProProtocol::ReadEffect(readback, 64, effect) && effect.mode == FractalThemes::Shift); // Custom six-color Shift palette.
     readback[12] = 9;
     assert(!FractalAdjustProProtocol::ReadEffect(readback, 64, effect));
-    std::cout << "PASS: packets, topology, bounds, chunks, HID errors/timeouts normal Apply, preview cancel, and no cooling commands\n";
+    for(const char* accepted : {"1.1.0", "1.1.3", "1.1.4", "1.1.9", "1.1.17", "1.1.18", "1.1.100", "1.2.0", "1.10.0", "2.0.0"})
+    {
+        firmware = accepted;
+        FractalAdjustProController controller(nullptr, "fake");
+        assert(controller.Initialize() && controller.firmware == accepted);
+    }
+    for(const char* rejected : {"0.99.99", "1.0.99", "", "1.1.-1", "1.1", "1.1.4.0", "1.1.4beta",
+                               "1..4", "1.1.-4", "1.1.+4", " 1.1.4", "1.1.4 ", "4294967296.1.4", "1111111111111111"})
+    {
+        firmware = rejected; writes.clear(); features.clear();
+        FractalAdjustProController controller(nullptr, "fake");
+        assert(!controller.Initialize() && writes.size() == 1 && features.empty());
+        assert(writes[0][1] == 0xF1 && writes[0][2] == 1); // Reject before RGB access.
+    }
+    std::cout << "PASS: firmware versions, packets, topology, bounds, chunks, HID errors/timeouts normal Apply, preview cancel, and no cooling commands\n";
 }

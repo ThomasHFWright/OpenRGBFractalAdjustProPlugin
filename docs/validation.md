@@ -1,3 +1,14 @@
+# v0.4.1 — Firmware compatibility policy
+
+The firmware gate now allows numeric versions **1.1.0 and newer**. The fake-HID
+check covers the minimum, older versions, multi-digit components, newer minor/major
+versions, missing components, trailing text, signs, overflow and unterminated
+replies. Rejected versions stop after the firmware query, before any RGB access.
+The RGB encoders and streaming transport are unchanged. The rebuilt plugin was
+installed into the official OpenRGB host: all 12 controllers were detected on
+firmware 1.1.17, with the active hardware settings preserved. See the README for the
+changelog evidence and the distinction between allowed and hardware-tested versions.
+
 # v0.4.0 — Shared Direct streaming
 
 Host: official **OpenRGB 1.0rc3.1** AppImage, plugin API 4 / SDK 5, Linux x86-64.

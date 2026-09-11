@@ -5,8 +5,26 @@
 | SPDX-License-Identifier: GPL-2.0-or-later                 |
 \*---------------------------------------------------------*/
 #include <chrono>
+#include <array>
+#include <charconv>
 #include "FractalAdjustProController.h"
 #include <cstdio>
+
+static bool FirmwareAllowed(const std::string& text)
+{
+    std::array<unsigned int, 3> version{};
+    const char* cursor = text.data();
+    const char* end = cursor + text.size();
+    for(unsigned int i = 0; i < version.size(); i++)
+    {
+        const auto result = std::from_chars(cursor, end, version[i]);
+        if(result.ec != std::errc{}) return false;
+        cursor = result.ptr;
+        if(i < 2 && (cursor == end || *cursor++ != '.')) return false;
+    }
+    // Allow the 1.1.x baseline and newer; see the firmware policy in README.
+    return cursor == end && version >= std::array<unsigned int, 3>{1, 1, 0};
+}
 
 FractalAdjustProController::FractalAdjustProController(hid_device* dev, const char* path)
 {
@@ -65,10 +83,9 @@ bool FractalAdjustProController::Initialize()
         return false;
     }
     firmware = (char*)reply + 4;
-    // ponytail: firmware 1.1.17 only; enable others after captures and hardware checks.
-    if(firmware != "1.1.17")
+    if(!FirmwareAllowed(firmware))
     {
-        std::fprintf(stderr, "[Fractal Adjust Pro] Untested firmware %s; refusing control\n", firmware.c_str());
+        std::fprintf(stderr, "[Fractal Adjust Pro] Firmware %s is older than 1.1.0 or malformed; refusing control\n", firmware.c_str());
         return false;
     }
     if(!Query(0xA4, 0x1A, 0, reply) || reply[4] != 0)

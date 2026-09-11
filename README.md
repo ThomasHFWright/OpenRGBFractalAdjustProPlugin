@@ -17,13 +17,13 @@ The downloaded Linux x86-64 AppImage was used for live validation. OpenRGB itsel
 needs no source changes or custom build.
 
 Download `libFractalAdjustProPlugin.so` from the
-[v0.4.0 release](https://github.com/ThomasHFWright/OpenRGBFractalAdjustProPlugin/releases/tag/v0.4.0).
+[v0.4.1 release](https://github.com/ThomasHFWright/OpenRGBFractalAdjustProPlugin/releases/tag/v0.4.1).
 Open OpenRGB, choose **Settings → Plugins → Install Plugin**, select the library,
 and enable it. Accessories appear in **Devices**. With OpenRGB closed, copying the
 library into `~/.config/OpenRGB/plugins/` is an alternative.
 
-- Linux HID `36bc:1001`, firmware **1.1.17**. Other firmware is refused.
-- Plugin v0.4.0 targets API 4 / Qt 5. It does not load into API 5 development builds
+- Linux HID `36bc:1001`, firmware **1.1.0 or newer**. Hardware-tested on **1.1.17**.
+- Plugin v0.4.1 targets API 4 / Qt 5. It does not load into API 5 development builds
   or OpenRGB 0.9's API 3. The older v0.1.0 plugin targeted development API 5.
 - The binary was built on Linux x86-64 with Qt 5.15.19, GCC 16 and glibc 2.44, and
   tested with the official AppImage on that machine. Build the plugin from source
@@ -165,3 +165,16 @@ node tests/verify_vendor.cjs /path/to/main.e2372c083cc6b94f.js
 Lava lamp uses a repeatable random phase so profiles replay consistently; the
 vendor app chooses a fresh random phase. This can change the initial arrangement,
 while retaining the same hardware animation and palette.
+
+## Firmware policy
+
+Versions **1.1.0 and newer** are allowed, using numeric major/minor/patch
+comparison. Older versions and malformed version strings are refused before
+RGB access. Normal protocol, topology and LampArray validation still applies.
+
+[Fractal's hub changelog](https://support.fractal-design.com/support/solutions/articles/4000217592-adjust-pro-change-log)
+lists 1.1.4 (2025-06-10) as a USB/Dynamic Lighting fix and 1.1.17 (2026-02-27)
+as minor bug fixes, with no documented RGB feature additions. It has no separate
+1.1.0 entry. Allowing the 1.1.x baseline is a compatibility policy based on that
+history, not verification of the older firmware. Newer versions are also allowed;
+**only 1.1.17 has been tested on hardware**.
