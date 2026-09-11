@@ -14,11 +14,65 @@ OpenRGBPluginInfo FractalAdjustProPlugin::GetPluginInfo()
     OpenRGBPluginInfo info{};
     info.Name = "Fractal Adjust Pro";
     info.Description = "Experimental RGB-only Adjust Pro support (firmware 1.1.17)";
-    info.Version = "0.3.0";
+    info.Version = "0.4.0";
     info.URL = "https://github.com/ThomasHFWright/OpenRGBFractalAdjustProPlugin";
     info.Location = OPENRGB_PLUGIN_LOCATION_TOP;
     info.Label = "Fractal Adjust Pro";
     return info;
+}
+
+FractalAdjustProPlugin::Direct::Direct(std::shared_ptr<FractalAdjustProController> hub_ptr)
+    : hub(std::move(hub_ptr))
+{
+    name = "Fractal Adjust Pro Direct (all accessories)";
+    vendor = "Fractal Design";
+    description = "Shared LampArray stream mirrored across all outputs";
+    type = DEVICE_TYPE_LEDSTRIP;
+    version = hub->firmware;
+    location = hub->location + " Direct";
+    serial = hub->serial + ":direct";
+    mode hardware;
+    hardware.name = "Hardware Effects";
+    hardware.color_mode = MODE_COLORS_NONE;
+    modes.push_back(hardware);
+    mode direct;
+    direct.name = "Direct";
+    direct.value = 1;
+    direct.flags = MODE_FLAG_HAS_PER_LED_COLOR;
+    direct.color_mode = MODE_COLORS_PER_LED;
+    modes.push_back(direct);
+    active_mode = 0;
+    zone z;
+    z.name = "All accessories (mirrored)";
+    z.type = ZONE_TYPE_LINEAR;
+    z.leds_min = z.leds_max = z.leds_count = hub->stream_leds;
+    zones.push_back(z);
+    for(unsigned int i = 0; i < hub->stream_leds; i++)
+    {
+        led l{};
+        l.name = "Shared LED " + std::to_string(i + 1);
+        leds.push_back(l);
+    }
+    SetupColors();
+}
+
+void FractalAdjustProPlugin::Direct::DeviceUpdateLEDs()
+{
+    bool ok = false;
+    if(active_mode == 0) ok = hub->StopStream();
+    else if(active_mode == 1)
+    {
+        std::vector<unsigned char> rgb;
+        rgb.reserve(colors.size() * 3);
+        for(const auto color : colors)
+        {
+            rgb.push_back(RGBGetRValue(color));
+            rgb.push_back(RGBGetGValue(color));
+            rgb.push_back(RGBGetBValue(color));
+        }
+        ok = hub->Stream(rgb);
+    }
+    if(!ok) std::fprintf(stderr, "[Fractal Adjust Pro] Direct update failed\n");
 }
 
 FractalAdjustProPlugin::Accessory::Accessory(std::shared_ptr<FractalAdjustProController> hub_ptr, unsigned int target)
@@ -184,6 +238,12 @@ void FractalAdjustProPlugin::Load(ResourceManagerInterface* api_ptr)
             api->RegisterRGBController(device.get());
             accessories.push_back(std::move(device));
         }
+        if(hub->stream_leds)
+        {
+            auto stream = std::make_unique<Direct>(hub);
+            api->RegisterRGBController(stream.get());
+            streams.push_back(std::move(stream));
+        }
     }
     hid_free_enumeration(devices);
     MigrateProfiles();
@@ -192,6 +252,12 @@ void FractalAdjustProPlugin::Load(ResourceManagerInterface* api_ptr)
 void FractalAdjustProPlugin::Unload()
 {
     if(!api) return;
+    for(auto& stream : streams)
+    {
+        api->UnregisterRGBController(stream.get());
+        stream->hub->StopStream();
+    }
+    streams.clear();
     for(auto& device : accessories)
     {
         api->UnregisterRGBController(device.get());
@@ -216,6 +282,7 @@ void FractalAdjustProPlugin::MigrateProfiles()
         original.close();
         if(prefix != expected) continue;
         auto controllers = manager->LoadProfileToList(name);
+        const auto owned_count = controllers.size();
         bool changed = false;
         for(auto* saved : controllers)
         {
@@ -232,9 +299,22 @@ void FractalAdjustProPlugin::MigrateProfiles()
                 break;
             }
         }
+        // Older hardware scenes must explicitly release the newly added global stream.
+        for(const auto& stream : streams)
+        {
+            bool present = false, has_accessory = false;
+            for(auto* saved : controllers)
+            {
+                present |= saved->serial == stream->serial && saved->name == stream->name;
+                for(const auto& live : accessories)
+                    if(live->hub == stream->hub && saved->serial == live->serial && saved->name == live->name)
+                        has_accessory = true;
+            }
+            if(has_accessory && !present) { controllers.push_back(stream.get()); changed = true; }
+        }
         if(changed)
         {
-            const QString backup_dir = QString::fromStdString((api->GetConfigurationDirectory() / "before-fractal-v0.3").string());
+            const QString backup_dir = QString::fromStdString((api->GetConfigurationDirectory() / "before-fractal-v0.4").string());
             QDir().mkpath(backup_dir);
             const QString backup = backup_dir + "/" + QFileInfo(path).fileName();
             QSaveFile output(path);
@@ -251,6 +331,6 @@ void FractalAdjustProPlugin::MigrateProfiles()
             if(ok) ok = output.commit();
             if(!ok) std::fprintf(stderr, "[Fractal Adjust Pro] Could not migrate profile %s; original retained\n", name.c_str());
         }
-        for(auto* saved : controllers) delete saved;
+        for(unsigned int i = 0; i < owned_count; i++) delete controllers[i];
     }
 }

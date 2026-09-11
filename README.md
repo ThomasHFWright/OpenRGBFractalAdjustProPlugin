@@ -6,7 +6,8 @@ merge request is required. GPL-2.0-or-later.
 
 The **Fractal Adjust Pro** tab provides one-click themes, custom hardware lighting,
 saved scenes, and startup effects. Each accessory also appears in **Devices**.
-Animations run on the hub and continue after OpenRGB closes.
+Hardware animations run on the hub and continue after OpenRGB closes. A separate
+**Direct (all accessories)** device accepts software-driven per-LED frames.
 
 ## Install with the normal OpenRGB release
 
@@ -16,13 +17,13 @@ The downloaded Linux x86-64 AppImage was used for live validation. OpenRGB itsel
 needs no source changes or custom build.
 
 Download `libFractalAdjustProPlugin.so` from the
-[v0.3.0 release](https://github.com/ThomasHFWright/OpenRGBFractalAdjustProPlugin/releases/tag/v0.3.0).
+[v0.4.0 release](https://github.com/ThomasHFWright/OpenRGBFractalAdjustProPlugin/releases/tag/v0.4.0).
 Open OpenRGB, choose **Settings → Plugins → Install Plugin**, select the library,
 and enable it. Accessories appear in **Devices**. With OpenRGB closed, copying the
 library into `~/.config/OpenRGB/plugins/` is an alternative.
 
 - Linux HID `36bc:1001`, firmware **1.1.17**. Other firmware is refused.
-- Plugin v0.3.0 targets API 4 / Qt 5. It does not load into API 5 development builds
+- Plugin v0.4.0 targets API 4 / Qt 5. It does not load into API 5 development builds
   or OpenRGB 0.9's API 3. The older v0.1.0 plugin targeted development API 5.
 - The binary was built on Linux x86-64 with Qt 5.15.19, GCC 16 and glibc 2.44, and
   tested with the official AppImage on that machine. Build the plugin from source
@@ -77,8 +78,9 @@ lighting; it does not undo ordinary Apply operations.
 
 **Save current scene** and **Load scene** use native OpenRGB profiles, including
 all OpenRGB devices. Wave shape is preserved in profiles. Existing v0.2 `.orp`
-profiles are upgraded automatically, with originals retained in
-`~/.config/OpenRGB/before-fractal-v0.3/`. Profiles store supported regular mode
+profiles are upgraded automatically; existing hardware profiles also gain an explicit
+Hardware Effects entry to release Direct streaming. Originals are retained in
+`~/.config/OpenRGB/before-fractal-v0.4/`. Profiles store supported regular mode
 parameters, not arbitrary vendor programs or a backup of hub flash. Unknown vendor
 presets appear as Saved.
 
@@ -103,13 +105,42 @@ Standalone CLI detection does not load plugins in this host revision.
 openrgb --client 127.0.0.1:6742 --noautoconnect \
   --device 'Fractal Adjust Pro Top Middle' --mode Static --color FF0000 --brightness 25
 openrgb --client 127.0.0.1:6742 --noautoconnect \
-  --device 'Fractal Adjust Pro' --mode Off
+  --device 'Fractal Adjust Pro Top Middle' --mode Off
 ```
 
-There is no Direct/per-LED streaming mode, so the Effects plugin's Direct-mode
-effects are unsupported. No fan control, telemetry, firmware updates, resets,
-or ownership switches are included. Power-cycle retention
-and other operating systems remain untested.
+## Direct streaming
+
+In **Devices**, select **Fractal Adjust Pro Direct (all accessories)** and its
+**Direct** mode. Send per-LED colors through OpenRGB's SDK or a compatible effects
+plugin. Select this shared device as the animation target. The eleven accessory
+controllers remain the controls for hardware themes.
+
+The firmware exposes **one shared stream**, mirrored across the outputs, rather
+than independent streaming to each accessory. Its length is the largest detected
+accessory: **76 LEDs on the tested setup**, not the sum of 265 physical LEDs.
+A full frame takes approximately 61 ms over USB (about 16 fps on this setup).
+Software effects require OpenRGB and their animation source to remain running.
+The Effects plugin itself has not been tested with this release.
+
+Stop the animation source, then use **Stop Direct — resume hardware effects** in
+the Fractal tab, choose **Hardware Effects** on the Direct device, or load a Fractal
+theme profile. Closing OpenRGB normally or unloading this plugin also restores
+stored hardware lighting. Disconnecting an SDK client alone leaves its last frame
+visible until one of these actions. A force-killed process cannot perform cleanup.
+
+Hardware Apply also releases the stream. If a software source keeps sending frames
+while Direct remains selected, its next update takes control again. Fractal-tab
+Apply and migrated theme profiles explicitly select Hardware Effects to stop that
+input. Use one animation source at a time.
+
+Direct profiles preserve the shared mode and LED colors; they do not save the
+external animation generator. Streaming uses volatile HID feature reports, with
+no per-frame flash commits and no change to the persistent Windows Dynamic
+Lighting preference. Startup lighting remains separate.
+
+No fan control, telemetry, firmware updates, resets, or persistent ownership
+switches are included. Power-cycle retention and other operating systems remain
+untested.
 
 ## Validation and provenance
 

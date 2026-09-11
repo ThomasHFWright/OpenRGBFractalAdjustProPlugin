@@ -17,6 +17,9 @@ public:
     FractalAdjustProController(hid_device* dev, const char* path);
     ~FractalAdjustProController();
     bool Initialize();
+    bool Stream(const std::vector<unsigned char>& rgb);
+    bool StopStream();
+    unsigned int stream_leds = 0;
     bool ReadStartup(unsigned int target, FractalStartupEffect& effect);
     bool ApplyStartup(unsigned int target, const FractalStartupEffect& effect);
     bool Apply(unsigned int target, unsigned int mode, unsigned int brightness, unsigned int speed,
@@ -28,6 +31,8 @@ public:
     std::vector<FractalAdjustProEffect> effects;
 
 private:
+    bool StopStreamLocked();
+    bool streaming = false;
     bool Upload(const std::vector<unsigned char>& header, const std::vector<unsigned char>& program, bool commit);
     bool ReadEffects();
     bool Exchange(const unsigned char* request, unsigned char* reply);

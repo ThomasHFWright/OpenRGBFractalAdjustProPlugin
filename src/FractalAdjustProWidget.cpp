@@ -30,6 +30,17 @@ QWidget* FractalAdjustProPlugin::GetWidget()
     auto* intro = new QLabel("Choose accessories, then apply a theme or custom lighting. Effects run on the hub after OpenRGB closes.");
     intro->setWordWrap(true);
     layout->addWidget(intro);
+    auto* stream_note = new QLabel("For software animations, select Direct on the ‘Fractal Adjust Pro Direct (all accessories)’ device. "
+                                  "Its LEDs are shared across the hub. Stop the animation source before choosing a Fractal theme.");
+    stream_note->setWordWrap(true);
+    layout->addWidget(stream_note);
+    auto* resume = new QPushButton("Stop Direct — resume hardware effects");
+    resume->setObjectName("stopDirect");
+    layout->addWidget(resume);
+    connect(resume, &QPushButton::clicked, panel, [this]()
+    {
+        for(auto& stream : streams) { stream->active_mode = 0; stream->UpdateMode(); }
+    });
     auto* targets = new QListWidget;
     targets->setObjectName("fractalTargets");
     targets->setMaximumHeight(150);
@@ -66,6 +77,9 @@ QWidget* FractalAdjustProPlugin::GetWidget()
                                        const std::vector<RGBColor>& colors, FractalThemes::Wave wave)
     {
         unsigned int done = 0, failed = 0;
+        bool selected = false;
+        for(int i = 0; i < targets->count(); i++) selected |= targets->item(i)->checkState() == Qt::Checked;
+        if(selected) for(auto& stream : streams) { stream->active_mode = 0; stream->UpdateMode(); }
         for(unsigned int i = 0; i < accessories.size(); i++)
         {
             if(targets->item(i)->checkState() != Qt::Checked) continue;

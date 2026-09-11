@@ -1,3 +1,38 @@
+# v0.4.0 — Shared Direct streaming
+
+Host: official **OpenRGB 1.0rc3.1** AppImage, plugin API 4 / SDK 5, Linux x86-64.
+Firmware **1.1.17**. Existing 11 hardware accessories / 265 physical LEDs plus
+one 76-LED shared Direct controller. No host patches.
+
+| Check | Result |
+| --- | --- |
+| Fake HID regression | PASS: exact RGB batches, partial final batch, latch flag, invalid lengths/counts, failed enter/frame/exit, external ownership refusal, destructor cleanup |
+| Read-only initialization | PASS: reports LampArray attributes; no control or flash writes |
+| Official SDK full-device, zone and single-LED updates | PASS: byte-exact feature report capture |
+| Sustained SDK animation | PASS: 492 frames in 30.013 seconds, 16.39 fps |
+| Flash writes during streaming | Zero |
+| Installed-plugin red/blue chase | PASS: user visually confirmed the moving pattern |
+| Native Direct profile save/load | PASS: mode and complete shared RGB buffer restored |
+| Existing hardware profile migration | PASS: original records preserved byte-for-byte, Hardware Effects entry appended, backups retained |
+| Fractal-tab Stop Direct button | PASS: autonomous restore only, no saved changes |
+| Native tray Northern lights and RGB Off from Direct | PASS: all 11 hardware targets applied and Direct disabled |
+| Native tray Lights Off from Direct | PASS: black hardware settings and black shared frame |
+| Normal host exit while streaming | PASS: autonomous feature report sent |
+| Final hardware readback | PASS: exact original regular/startup/rotation/mirror metadata restored |
+
+The earlier standalone volatile probe completed 1,476 frames over 90 seconds;
+full-frame USB calls averaged 61.0 ms. The SDK test includes the real plugin and
+unmodified host. Detailed private evidence is in the parent workspace's
+`plans/evidence/direct-*` and `validate-direct*.py`; serials and profiles are not
+published. The installed library was built from the source tested here.
+
+The user visually confirmed the moving red/blue chase from the installed plugin.
+The shared-output limitation follows the firmware buffer/dispatch behavior; exact
+pixel mapping on every accessory has not been measured.
+The separate Effects plugin, physical unplug, other firmware, and other operating
+systems remain untested. A disconnected SDK client leaves its last frame until
+hardware control resumes; a force-killed OpenRGB process cannot send cleanup.
+
 # v0.3.0 — Themes, custom lighting and startup
 
 Host: official downloaded OpenRGB **1.0rc3.1** Linux x86-64 AppImage, plugin API 4,

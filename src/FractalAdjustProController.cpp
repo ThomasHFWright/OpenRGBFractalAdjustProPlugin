@@ -16,6 +16,7 @@ FractalAdjustProController::FractalAdjustProController(hid_device* dev, const ch
 
 FractalAdjustProController::~FractalAdjustProController()
 {
+    StopStream();
     hid_close(device);
 }
 
@@ -96,7 +97,73 @@ bool FractalAdjustProController::Initialize()
         }
         targets[i].name.assign((char*)reply + 5, reply[4]);
     }
-    return ReadEffects();
+    if(!ReadEffects()) return false;
+    unsigned char attributes[23] = {3};
+    if(hid_get_feature_report(device, attributes, sizeof(attributes)) == sizeof(attributes) && attributes[0] == 3)
+    {
+        const unsigned int count = attributes[1] | (attributes[2] << 8);
+        unsigned int maximum = 0;
+        for(const auto& target : targets) maximum = std::max(maximum, (unsigned int)target.leds);
+        // Firmware shares one buffer across all outputs. Refuse unexpected bounds.
+        if(count == maximum && count > 0 && count <= 255) stream_leds = count;
+    }
+    return true;
+}
+
+bool FractalAdjustProController::StopStreamLocked()
+{
+    if(!streaming) return true;
+    const unsigned char control[] = {8, 1};
+    if(hid_send_feature_report(device, control, sizeof(control)) != sizeof(control)) return false;
+    streaming = false;
+    return true;
+}
+
+bool FractalAdjustProController::StopStream()
+{
+    std::lock_guard<std::mutex> lock(mutex);
+    return StopStreamLocked();
+}
+
+bool FractalAdjustProController::Stream(const std::vector<unsigned char>& rgb)
+{
+    if(!stream_leds || rgb.size() != stream_leds * 3) return false;
+    std::lock_guard<std::mutex> lock(mutex);
+    if(!streaming)
+    {
+        unsigned char reply[FRACTAL_REPORT_SIZE];
+        if(!Query(0xA4, 0x1A, 0, reply) || reply[4] != 0) return false;
+        const unsigned char control[] = {8, 0};
+        // Retain ownership on uncertain writes so cleanup still resumes autonomous lighting.
+        streaming = true;
+        if(hid_send_feature_report(device, control, sizeof(control)) != sizeof(control))
+        {
+            StopStreamLocked();
+            return false;
+        }
+    }
+    // ponytail: synchronous full frames (~16 fps at 76 LEDs); dirty batches only if needed.
+    for(unsigned int offset = 0; offset < stream_leds; offset += 8)
+    {
+        unsigned char report[51] = {6};
+        const unsigned int count = std::min(8U, stream_leds - offset);
+        report[1] = count;
+        report[2] = offset + count == stream_leds ? 1 : 0;
+        for(unsigned int i = 0; i < count; i++)
+        {
+            report[3 + i * 2] = (offset + i) & 255;
+            report[4 + i * 2] = (offset + i) >> 8;
+            std::copy_n(rgb.data() + (offset + i) * 3, 3, report + 19 + i * 4);
+            report[22 + i * 4] = 255;
+        }
+        if(hid_send_feature_report(device, report, sizeof(report)) != sizeof(report))
+        {
+            StopStreamLocked();
+            std::fprintf(stderr, "[Fractal Adjust Pro] Direct frame failed; resuming hardware effects\n");
+            return false;
+        }
+    }
+    return true;
 }
 
 bool FractalAdjustProController::ReadEffects()
@@ -131,6 +198,7 @@ bool FractalAdjustProController::Apply(unsigned int target, unsigned int mode, u
     }
     std::lock_guard<std::mutex> lock(mutex);
     unsigned char reply[FRACTAL_REPORT_SIZE];
+    if(!StopStreamLocked()) return false;
     if(!Query(0xA4, 0x1A, 0, reply) || reply[4] != 0)
     {
         std::fprintf(stderr, "[Fractal Adjust Pro] Dynamic Lighting active or unreadable; update refused\n");
@@ -204,6 +272,7 @@ bool FractalAdjustProController::ApplyStartup(unsigned int target, const Fractal
     std::vector<unsigned char> header, program;
     if(!FractalStartupPacket(effect, targets[target].leds, header, program)) return false;
     std::lock_guard<std::mutex> lock(mutex);
+    if(!StopStreamLocked()) return false;
     unsigned char reply[FRACTAL_REPORT_SIZE];
     if(!Query(0xA4, 0x1A, 0, reply) || reply[4] != 0) return false;
     unsigned char select[FRACTAL_REPORT_SIZE] = {2, 0xA4, 0x0A, 1, targets[target].id};

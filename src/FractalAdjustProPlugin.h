@@ -20,6 +20,19 @@ public:
 
 private:
     void MigrateProfiles();
+    struct Direct : RGBController
+    {
+        explicit Direct(std::shared_ptr<FractalAdjustProController> hub_ptr);
+        void SetupZones() override {}
+        void ResizeZone(int, int) override {}
+        void DeviceUpdateLEDs() override;
+        void UpdateLEDs() override { DeviceUpdateLEDs(); }
+        void UpdateZoneLEDs(int zone) override { if(zone == 0) DeviceUpdateLEDs(); }
+        void UpdateSingleLED(int led) override { if(led >= 0 && led < (int)leds.size()) DeviceUpdateLEDs(); }
+        void DeviceUpdateMode() override { DeviceUpdateLEDs(); }
+        void UpdateMode() override { DeviceUpdateMode(); }
+        std::shared_ptr<FractalAdjustProController> hub;
+    };
     struct Accessory : RGBController
     {
         Accessory(std::shared_ptr<FractalAdjustProController> hub_ptr, unsigned int target);
@@ -40,4 +53,5 @@ private:
     };
     ResourceManagerInterface* api = nullptr;
     std::vector<std::unique_ptr<Accessory>> accessories;
+    std::vector<std::unique_ptr<Direct>> streams;
 };

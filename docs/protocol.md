@@ -22,7 +22,7 @@ All requests and replies are 64 bytes including report ID `02`; unused bytes are
 | `a4 16`, `a4 18` | Rotation/mirror queries | Value at 4 |
 | `a4 14`, `a4 1b` | ARGB generation/compatibility (validation only) | Port data following status |
 
-Selection is a transport cursor. No getter was found; enumeration leaves the last accessory selected as the vendor app does. Every driver update selects its own target while holding the shared HID mutex. No cooling, firmware upgrade/reset, ownership, orientation, ARGB configuration operation is used. Startup writes are explicitly separate from regular lighting.
+Selection is a transport cursor. No getter was found; enumeration leaves the last accessory selected as the vendor app does. Every driver update selects its own target while holding the shared HID mutex. No cooling, firmware upgrade/reset, persistent ownership, orientation, or ARGB configuration operation is used. Startup writes are explicitly separate from regular lighting.
 
 Topology is 11 selectors / 265 LEDs: `01/02/03/04/11/12/13` have 20 LEDs, `21` has 11 ARGB1 LEDs, `31/32/33` have 3/35/76 ARGB2 LEDs. Zero generation byte means ARGB2. Physical port is high nibble + 1. Vendor UI groups the three last targets as Meshify 3 XL. The legacy chain is not assumed independently addressable per accessory. [Initial captures](baseline-queries.json) and [name/effect captures](effect-queries.json) contain actual device replies, not generated fixtures.
 
@@ -116,3 +116,48 @@ All four kinds were written to every accessory and read back successfully, then
 the original Meshify/white/50% startup metadata was restored exactly. Regular
 metadata and orientation remained unchanged. This proves the command/save/readback
 path, not the animation's appearance or power-cycle retention.
+
+
+## Direct streaming (firmware 1.1.17)
+
+The hub accepts standard LampArray HID **feature** reports on interface 0 even
+when its active descriptor advertises only vendor report 2 and the persistent
+Windows Dynamic Lighting preference is disabled. These are HIDAPI
+`hid_get_feature_report` / `hid_send_feature_report`, not the 64-byte vendor
+request/reply exchange. No preference toggle or descriptor change is needed.
+
+| Report | Bytes, including report ID | Meaning |
+| --- | --- | --- |
+| Get `03` | 23 | LampArray attributes; bytes 1–2 are the little-endian lamp count |
+| Set `08 00` | 2 | Suspend autonomous lighting; accept streamed frames |
+| Set `06` | 51 | Update up to eight lamps; layout below |
+| Set `08 01` | 2 | Resume autonomous hardware lighting |
+
+Report 6: byte 1 is lamp count (1–8), byte 2 is the completion flag (1 only on
+the last batch in a frame), bytes 3–18 contain eight little-endian uint16 lamp
+indices, and bytes 19–50 contain eight RGB-intensity quads. Unused entries are
+zero. This firmware copies RGB and ignores intensity; the plugin sends 255.
+No vendor acknowledgement follows a feature write: HIDAPI must return its exact
+length. A failed batch aborts the frame and attempts autonomous restoration.
+
+The firmware uses one RGB buffer for all four outputs. The returned lamp count
+is the maximum accessory LED count. The plugin checks this against topology and
+allows 1–255 lamps; missing or inconsistent attributes disable Direct while
+retaining hardware lighting support. On the tested hub, attributes were:
+`03 4c00 400d0300 400d0300 204e0000 07000000 e02e0000`
+(76 lamps; advertised minimum update interval 12,000 microseconds).
+Ten feature reports are needed for 76 lamps; actual USB throughput was roughly
+61 ms per complete frame. The encoder deliberately uses synchronous full frames.
+
+Direct changes volatile autonomous control only. Discovery is read-only. All
+feature and vendor traffic uses the same hub mutex. A normal hardware Apply,
+explicit Hardware Effects selection, or plugin unload releases an owned stream.
+External Dynamic Lighting ownership detected before starting is still refused.
+No startup data, rotation, mirror, cooling setting or firmware is changed.
+
+The vendor JavaScript's `A5 F0` / `A5 01` / `A5 F1` streaming path belongs to
+another product. Although the hub firmware logger recognizes those command
+names, the hub's dispatcher does not implement that path. The plugin does not
+send them. Transport findings were checked against the official 1.1.17 firmware
+image (SHA-256 `068a32ab0dfb3119f51f0254fc9a36e4c48bbb6143a057d6d56648f16fafbf20`)
+and live volatile feature reports. No firmware was flashed or redistributed.

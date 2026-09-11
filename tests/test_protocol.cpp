@@ -14,6 +14,22 @@ static unsigned int fail_at_write = 0;
 static int closes = 0;
 static bool second_target = false;
 static unsigned char selected = 1;
+static std::vector<std::vector<unsigned char>> features;
+static int feature_count = 20, feature_length = 23, feature_fail = 0;
+static bool autonomous = true;
+int hid_get_feature_report(hid_device*, unsigned char* data, size_t length)
+{
+    assert(length == 23 && data[0] == 3);
+    data[1] = feature_count & 255; data[2] = feature_count >> 8;
+    return feature_length;
+}
+int hid_send_feature_report(hid_device*, const unsigned char* data, size_t length)
+{
+    features.emplace_back(data, data + length);
+    assert((data[0] == 6 && length == 51) || (data[0] == 8 && length == 2));
+    if(feature_fail != (int)features.size() && data[0] == 8) autonomous = data[1] != 0;
+    return feature_fail == (int)features.size() ? -1 : (int)length;
+}
 int hid_write(hid_device*, const unsigned char* data, size_t length)
 {
     writes.emplace_back(data, data + length);
@@ -32,6 +48,7 @@ int hid_read_timeout(hid_device*, unsigned char* data, size_t length, int millis
     if(fault == 5) data[3] = 1;
     if(fault == 6) { data[2] ^= 1; fault = 2; return 64; }
     if(data[1] == 0xF1 && data[2] == 1) std::memcpy(data + 4, "1.1.17", 7);
+    if(data[1] == 0xA4 && data[2] == 0x1A) data[4] = !autonomous;
     if(data[1] == 0xA4 && data[2] == 8)
     {
         data[4] = second_target ? 2 : 1; data[5] = 1; data[6] = 20; data[8] = 2; data[9] = 20;
@@ -261,6 +278,64 @@ int main(int argc, char** argv)
         assert(!controller.ApplyStartup(0, invalid) && writes.empty());
     }
     assert(closes == 4);
+    {
+        FractalAdjustProController controller(nullptr, "fake");
+        assert(controller.Initialize() && controller.stream_leds == 20);
+        // Exercise the live 76-LED bound and its final partial batch.
+        controller.stream_leds = 76;
+        std::vector<unsigned char> rgb(76 * 3);
+        for(unsigned int i = 0; i < rgb.size(); i++) rgb[i] = i;
+        writes.clear(); features.clear();
+        assert(!controller.Stream({}) && writes.empty() && features.empty());
+        assert(controller.Stream(rgb));
+        assert(writes.size() == 1 && writes[0][2] == 0x1A);
+        assert(features.size() == 11 && features[0] == std::vector<unsigned char>({8,0}));
+        for(unsigned int batch = 0; batch < 10; batch++)
+        {
+            const auto& packet = features[batch + 1];
+            assert(packet[1] == (batch == 9 ? 4 : 8) && packet[2] == (batch == 9));
+            for(unsigned int i = 0; i < packet[1]; i++)
+            {
+                assert(packet[3 + 2*i] == batch*8 + i && packet[4 + 2*i] == 0);
+                for(unsigned int c = 0; c < 3; c++) assert(packet[19 + 4*i + c] == rgb[(batch*8+i)*3+c]);
+                assert(packet[22 + 4*i] == 255);
+            }
+        }
+        writes.clear(); features.clear();
+        assert(controller.Stream(rgb) && writes.empty() && features.size() == 10);
+        assert(controller.StopStream() && features.back() == std::vector<unsigned char>({8,1}));
+        const auto stopped_count = features.size();
+        assert(controller.StopStream() && features.size() == stopped_count);
+        autonomous = false; features.clear();
+        assert(!controller.Stream(rgb) && features.empty()); // Do not steal another owner's stream.
+        autonomous = true;
+        for(int fail = 1; fail <= 11; fail++)
+        {
+            features.clear(); feature_fail = fail;
+            assert(!controller.Stream(rgb));
+            assert(features.size() == (unsigned int)fail + 1 && features.back() == std::vector<unsigned char>({8,1}));
+        }
+        feature_fail = 0; features.clear(); writes.clear();
+        assert(controller.Stream(rgb));
+        assert(controller.Apply(0, FRACTAL_STATIC, 25, 100, red_blue, 1));
+        assert(features.back() == std::vector<unsigned char>({8,1}));
+        features.clear(); assert(controller.Stream(rgb));
+        feature_fail = features.size() + 1; writes.clear();
+        assert(!controller.Apply(0, FRACTAL_STATIC, 25, 100, red_blue, 1) && writes.empty());
+        feature_fail = 0;
+    }
+    assert(features.back() == std::vector<unsigned char>({8,1})); // Unload restores autonomous lighting.
+    for(int count : {0, 19, 256})
+    {
+        feature_count = count;
+        FractalAdjustProController controller(nullptr, "fake");
+        assert(controller.Initialize() && controller.stream_leds == 0);
+    }
+    feature_count = 20; feature_length = 22;
+    {
+        FractalAdjustProController controller(nullptr, "fake");
+        assert(controller.Initialize() && controller.stream_leds == 0);
+    }
     unsigned char readback[64] = {2,0xA4,5,0};
     FractalAdjustProEffect effect;
     readback[11] = 153; readback[12] = 1; readback[13] = 100; readback[14] = 255; readback[17] = 25;
