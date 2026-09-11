@@ -2,32 +2,32 @@
 #include <cstdio>
 #include "FractalAdjustProPlugin.h"
 
-static_assert(OPENRGB_PLUGIN_API_VERSION == 5, "Build against the documented OpenRGB API 5 revision");
+static_assert(OPENRGB_PLUGIN_API_VERSION == 4, "Build against OpenRGB 1.0rc3.1 (plugin API 4)");
 
 OpenRGBPluginInfo FractalAdjustProPlugin::GetPluginInfo()
 {
     OpenRGBPluginInfo info{};
     info.Name = "Fractal Adjust Pro";
     info.Description = "Experimental RGB-only Adjust Pro support (firmware 1.1.17)";
-    info.Version = "0.1.0";
+    info.Version = "0.2.0";
     info.URL = "https://github.com/ThomasHFWright/OpenRGBFractalAdjustProPlugin";
     info.Location = OPENRGB_PLUGIN_LOCATION_INFORMATION;
     info.Label = "Fractal Adjust Pro";
     return info;
 }
 
-RGBController_Setup FractalAdjustProPlugin::Setup(Accessory& device)
+FractalAdjustProPlugin::Accessory::Accessory(std::shared_ptr<FractalAdjustProController> hub_ptr, unsigned int target)
+    : hub(std::move(hub_ptr)), index(target)
 {
-    RGBController_Setup setup{};
-    const FractalAdjustProTarget& accessory = device.hub->targets[device.index];
+    const FractalAdjustProTarget& accessory = hub->targets[index];
     std::string address = "Port " + std::to_string((accessory.id >> 4) + 1) + " Device " + std::to_string(accessory.id & 0x0F);
-    setup.name = "Fractal Adjust Pro " + (accessory.name.empty() ? address : accessory.name);
-    setup.vendor = "Fractal Design";
-    setup.description = "Experimental RGB-only accessory, ARGB" + std::to_string(accessory.generation) + "; " + address;
-    setup.type = DEVICE_TYPE_LEDSTRIP;
-    setup.version = device.hub->firmware;
-    setup.location = device.hub->location + " " + address;
-    setup.serial = device.hub->serial + ":" + std::to_string(accessory.id);
+    name = "Fractal Adjust Pro " + (accessory.name.empty() ? address : accessory.name);
+    vendor = "Fractal Design";
+    description = "Experimental RGB-only accessory, ARGB" + std::to_string(accessory.generation) + "; " + address;
+    type = DEVICE_TYPE_LEDSTRIP;
+    version = hub->firmware;
+    location = hub->location + " " + address;
+    serial = hub->serial + ":" + std::to_string(accessory.id);
 
     const char* names[] = {"Saved", "Static", "Off", "Breathing", "Color Cycle"};
     for(unsigned int i = 0; i <= FRACTAL_CYCLE; i++)
@@ -65,41 +65,37 @@ RGBController_Setup FractalAdjustProPlugin::Setup(Accessory& device)
             m.speed_max = 100;
             m.speed = 50;
         }
-        setup.modes.push_back(m);
+        modes.push_back(m);
     }
-    const FractalAdjustProEffect& current = device.hub->effects[device.index];
-    setup.active_mode = current.mode;
-    setup.modes[setup.active_mode].brightness = current.brightness;
-    setup.modes[setup.active_mode].speed = current.speed;
-    for(unsigned int i = 0; i < setup.modes[setup.active_mode].colors.size(); i++)
+    const FractalAdjustProEffect& current = hub->effects[index];
+    active_mode = current.mode;
+    modes[active_mode].brightness = current.brightness;
+    modes[active_mode].speed = current.speed;
+    for(unsigned int i = 0; i < modes[active_mode].colors.size(); i++)
     {
-        setup.modes[setup.active_mode].colors[i] = ToRGBColor(current.colors[i * 3], current.colors[i * 3 + 1], current.colors[i * 3 + 2]);
+        modes[active_mode].colors[i] = ToRGBColor(current.colors[i * 3], current.colors[i * 3 + 1], current.colors[i * 3 + 2]);
     }
 
     zone z;
-    z.name = setup.name;
+    z.name = name;
     z.type = ZONE_TYPE_LINEAR;
     z.leds_min = z.leds_max = z.leds_count = accessory.leds;
-    setup.zones.push_back(z);
+    zones.push_back(z);
     for(unsigned int i = 0; i < accessory.leds; i++)
     {
         led l{};
         l.name = "LED " + std::to_string(i + 1);
-        setup.leds.push_back(l);
+        leds.push_back(l);
     }
-    setup.object_ptr = &device;
-    setup.DeviceUpdateMode = UpdateMode;
-    return setup;
+    SetupColors();
 }
 
-void FractalAdjustProPlugin::UpdateMode(void* object)
+void FractalAdjustProPlugin::Accessory::DeviceUpdateMode()
 {
-    auto& device = *static_cast<Accessory*>(object);
-    auto* rgb = device.rgb;
-    const int mode = rgb->GetActiveMode();
-    if(mode < FRACTAL_SAVED || mode > FRACTAL_CYCLE) return;
-    const unsigned int count = rgb->GetModeColorsCount(mode);
-    if((mode == FRACTAL_STATIC && count != 1) || (mode == FRACTAL_BREATHING && count != 2) || count > 2)
+    if(active_mode < FRACTAL_SAVED || active_mode > FRACTAL_CYCLE) return;
+    const mode m = modes[active_mode];
+    const unsigned int count = m.colors.size();
+    if((active_mode == FRACTAL_STATIC && count != 1) || (active_mode == FRACTAL_BREATHING && count != 2) || count > 2)
     {
         std::fprintf(stderr, "[Fractal Adjust Pro] Invalid mode color count\n");
         return;
@@ -107,22 +103,19 @@ void FractalAdjustProPlugin::UpdateMode(void* object)
     unsigned char colors[6] = {};
     for(unsigned int i = 0; i < count; i++)
     {
-        const RGBColor color = rgb->GetModeColor(mode, i);
-        colors[i * 3] = RGBGetRValue(color);
-        colors[i * 3 + 1] = RGBGetGValue(color);
-        colors[i * 3 + 2] = RGBGetBValue(color);
+        colors[i * 3] = RGBGetRValue(m.colors[i]);
+        colors[i * 3 + 1] = RGBGetGValue(m.colors[i]);
+        colors[i * 3 + 2] = RGBGetBValue(m.colors[i]);
     }
-    const unsigned int flags = rgb->GetModeFlags(mode);
-    if(!device.hub->Apply(device.index, mode,
-                         flags & MODE_FLAG_HAS_BRIGHTNESS ? rgb->GetModeBrightness(mode) : 100,
-                         flags & MODE_FLAG_HAS_SPEED ? rgb->GetModeSpeed(mode) : 100,
-                         colors, count))
+    if(!hub->Apply(index, active_mode,
+                   m.flags & MODE_FLAG_HAS_BRIGHTNESS ? m.brightness : 100,
+                   m.flags & MODE_FLAG_HAS_SPEED ? m.speed : 100, colors, count))
     {
-        std::fprintf(stderr, "[Fractal Adjust Pro] Failed to apply mode to %s\n", rgb->GetName().c_str());
+        std::fprintf(stderr, "[Fractal Adjust Pro] Failed to apply mode to %s\n", name.c_str());
     }
 }
 
-void FractalAdjustProPlugin::Load(OpenRGBPluginAPIInterface* api_ptr)
+void FractalAdjustProPlugin::Load(ResourceManagerInterface* api_ptr)
 {
     if(api) return;
     api = api_ptr;
@@ -146,12 +139,8 @@ void FractalAdjustProPlugin::Load(OpenRGBPluginAPIInterface* api_ptr)
         if(!hub->Initialize()) continue;
         for(unsigned int i = 0; i < hub->targets.size(); i++)
         {
-            auto device = std::make_unique<Accessory>();
-            device->hub = hub;
-            device->index = i;
-            auto setup = Setup(*device);
-            device->rgb = api->CreateVirtualRGBController(&setup);
-            api->RegisterVirtualRGBController(device->rgb);
+            auto device = std::make_unique<Accessory>(hub, i);
+            api->RegisterRGBController(device.get());
             accessories.push_back(std::move(device));
         }
     }
@@ -163,9 +152,7 @@ void FractalAdjustProPlugin::Unload()
     if(!api) return;
     for(auto& device : accessories)
     {
-        api->UnregisterVirtualRGBController(device->rgb);
-        // Keep the callback object and shared HID handle alive until the host joins its worker.
-        api->DeleteVirtualRGBController(device->rgb);
+        api->UnregisterRGBController(device.get());
     }
     accessories.clear();
     api = nullptr;

@@ -1,62 +1,59 @@
-# Plugin validation — 2026-09-11
+# v0.2.0 — Normal release validation
 
-Host: unmodified official OpenRGB `728846f66861dd1cb7dc04835f651830d6ef13ce`,
-plugin API 5, Qt 5.15.19, Linux x86-64, hidapi-hidraw 0.15.0. The host was built
-from a clean upstream checkout, with no Fractal controller compiled in.
-The independently loaded `.so` supplies all Fractal devices.
+Host: the official downloaded **OpenRGB 1.0rc3.1 Linux x86-64 AppImage**, as linked
+from [OpenRGB releases](https://openrgb.org/releases.html). No locally compiled or
+modified OpenRGB binary was used for these tests.
 
-Hub firmware: 1.1.17. Exactly 11 accessories / 265 LEDs. Other OpenRGB hardware
-detectors were disabled for these tests. The Fractal browser app was closed.
+- Release revision: `5e81e26fcc65d3dacfb76b0a30ec0142ec7bb131`
+- Plugin API **4**, SDK protocol **5**
+- AppImage SHA256: `42910311b364ae525ca593f53f5fadcf746b4de41e9e49302a5aa5dd614a608a`
+- Plugin built with Qt 5.15.19, GCC 16, glibc 2.44 and hidapi-hidraw 0.15.0
+- Hub firmware 1.1.17; 11 accessories / 265 LEDs
+
+The API 4 wrapper registers ordinary local RGB controllers through
+`ResourceManagerInterface`. It links the matching upstream RGBController
+implementation into the plugin. Lighting uploads are synchronous configuration
+changes, so no queued USB writes survive plugin unloading. The validated protocol
+encoder and HID transport are unchanged from v0.1.0.
 
 | Check | Result |
 | --- | --- |
-| Standalone packet/transport regression check (`./check.sh`) | PASS |
-| Plugin compilation and dynamic dependencies | PASS |
-| Settings → Plugins → Install Plugin file picker | PASS, copied final library byte-for-byte and loaded 11 devices |
-| Official GUI loads API 5 plugin; SDK lists all 11 devices | PASS |
-| Startup reads firmware, names, topology and current effects without lighting writes | PASS |
-| Top Middle red + Top Front green independently | PASS, USB ACKs and user visual confirmation |
-| Static blue on all accessories, brightness 0 / 25 / 75 | PASS, 104 acknowledged exchanges per update, exact metadata |
-| Breathing speed 0 / 100 | PASS, 15 acknowledged exchanges per update, exact speed metadata |
-| Independent red/blue Breathing + six-color Cycle | PASS, 28 acknowledged exchanges and hardware readback |
-| SDK saves and restores two-color and animation profiles | PASS |
-| Saved cancels preview without replacing the stored animations | PASS, 33 acknowledged exchanges and hardware readback |
-| Previous built-in driver Off profile imported | PASS, all 11 accessories off |
-| Disable plugin in Settings | PASS, zero SDK devices, USB handle released, hardware state unchanged |
-| Enable plugin again | PASS, exactly 11 devices, no duplicates, current modes read back |
-| Graceful GUI exit and restart | PASS, devices rediscovered, USB handle released on exit |
-| Startup effects, rotation, mirror | Unchanged byte-for-byte |
-| Final state | Off on all 11 accessories; exact original readback |
+| Protocol/transport regression (`./check.sh`) | PASS |
+| Plugin build and dynamic dependencies | PASS |
+| Official AppImage loads plugin and discovers 11 accessories | PASS |
+| GUI Install Plugin file picker | PASS; installed library matches built library |
+| Initial detection | Read-only lighting state, no Apply writes |
+| Independent red / green Static | PASS: exact metadata, 18 acknowledged HID exchanges |
+| All-accessory Static blue, brightness 0 / 25 / 75 | PASS: exact metadata, 104 exchanges each |
+| Breathing speed 0 / 100 | PASS: exact metadata, 15 exchanges each |
+| Mixed Breathing / Color Cycle / Static profile | PASS: 114 exchanges and hardware readback |
+| Three development JSON profiles migrated to native `.orp` | PASS: supported parameters preserved |
+| Two-color, animation and Off `.orp` save/load round trips | PASS: exact Apply metadata reproduced |
+| GUI Load Profile button | PASS: migrated two-color profile applied |
+| Saved preview cancellation | PASS: 33 exchanges; saved animation state preserved |
+| Disable / enable plugin | PASS: 0 / 11 SDK devices, no duplicates, USB handle released while disabled |
+| Disable preserves lighting | PASS: exact hardware readback before/after |
+| Graceful close / restart | PASS; no API 5 thread-teardown warnings |
+| Startup effects, rotation, mirroring | Unchanged byte-for-byte |
 
-The live test controlled the real plugin through the official GUI's SDK server,
-not a separate HID implementation. All captured HID exchanges had 64-byte requests
-and replies with matching report/family/command and zero status. An allowlist
-covered only the discovery and regular RGB commands. Direct readback took place
-only after the plugin had released the hub.
+All traced HID requests/replies were 64 bytes, with matching report/family/command
+and zero status. An allowlist permitted only the discovery and regular RGB
+commands. Direct readback was performed only while the plugin had released the
+hub. Detailed commands, traces, and profiles are retained locally in the parent
+workspace's `plans/evidence/release-*` records and `validate-release-plugin.py`.
+Profiles containing hardware serials are excluded from this public repository.
 
-Detailed local captures, test commands, and profiles are retained in the parent
-workspace's `plans/evidence/plugin-*` files; profiles containing hardware serials
-are excluded from this public repository. The public normal-Apply capture predates
-the plugin and documents the unchanged transport protocol.
+Profiles preserve supported modes and parameters. Saved means “resume current
+saved lighting”; it cannot restore an arbitrary vendor program from the earlier
+JSON profile. Off and the implemented custom animations/colors can be restored.
 
-## Host limitations
+The release host logs a network receive error when an SDK client disconnects
+normally; the listener remains available and subsequent clients succeed. Its CLI
+prints the HID location in the Version field; the plugin's actual firmware string
+and HID firmware query are 1.1.17. These are existing host behaviors.
 
-This is a development version of OpenRGB. Its API 5 virtual-controller deletion
-path logs `Device thread still active in base class destructor`; the base cleanup
-then stops and joins the thread. Disable/re-enable and graceful exit completed in
-live testing. The plugin uses the documented deletion API and keeps its callback
-objects and HID connection alive until deletion returns. The host also logs a
-network receive error when an SDK client disconnects normally; the listener remains
-available and subsequent clients connect successfully. No host patches are included.
-
-OpenRGB's missing-udev warning is generic: this machine already has a Fractal rule
-that grants access. The development host does not persist its “don't show again”
-checkbox through its settings schema. The warning's existing no-show preference
-was stored directly in the local configuration while OpenRGB was closed; the next
-GUI launch showed no dialog. No udev rules or permissions were changed.
-
-Power-cycle retention, physical hot-unplug during an upload, other firmware, other
-operating systems, and Direct/per-LED effects remain untested or unsupported.
-Disconnect and timeout handling are covered by fake-HID regression checks. The new
-plugin's animations were verified by ACKs and readback; the same hardware encoder's
-animations had previously been visually confirmed using the built-in driver.
+No Direct/per-LED streaming, cooling, firmware, reset, ownership, or startup-effect
+operations were added. Power-cycle retention, physical hot-unplug during upload,
+other firmware and other operating systems remain untested. Error/timeout handling
+is covered by the fake-HID regression check. The previous development-build result
+is retained separately as [historical API 5 validation](validation-api5.md).

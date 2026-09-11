@@ -3,6 +3,7 @@
 #include <memory>
 #include "OpenRGBPluginInterface.h"
 #include "FractalAdjustProController.h"
+#include "RGBController.h"
 
 class FractalAdjustProPlugin : public QObject, public OpenRGBPluginInterface
 {
@@ -12,27 +13,27 @@ class FractalAdjustProPlugin : public QObject, public OpenRGBPluginInterface
 public:
     OpenRGBPluginInfo GetPluginInfo() override;
     unsigned int GetPluginAPIVersion() override { return OPENRGB_PLUGIN_API_VERSION; }
-    void Load(OpenRGBPluginAPIInterface* api_ptr) override;
+    void Load(ResourceManagerInterface* api_ptr) override;
     void Unload() override;
     QWidget* GetWidget() override;
     QMenu* GetTrayMenu() override { return nullptr; }
-    void OnProfileAboutToLoad() override {}
-    void OnProfileLoad(nlohmann::json) override {}
-    nlohmann::json OnProfileSave() override { return nlohmann::json::object(); }
-    unsigned char* OnSDKCommand(unsigned int, unsigned char*, unsigned int* size) override { *size = 0; return nullptr; }
-    void ProfileManagerUpdated(unsigned int) override {}
-    void ResourceManagerUpdated(unsigned int) override {}
-    void SettingsManagerUpdated(unsigned int) override {}
 
 private:
-    struct Accessory
+    struct Accessory : RGBController
     {
+        Accessory(std::shared_ptr<FractalAdjustProController> hub_ptr, unsigned int target);
+        void SetupZones() override {} // Fixed topology, initialized in the constructor.
+        void ResizeZone(int, int) override {}
+        void DeviceUpdateLEDs() override {}
+        void UpdateZoneLEDs(int) override {}
+        void UpdateSingleLED(int) override {}
+        void DeviceUpdateMode() override;
+        // Configuration uploads are synchronous: no queued HID work can outlive this plugin.
+        void UpdateMode() override { DeviceUpdateMode(); }
+        void UpdateLEDs() override {} // No per-LED/Direct mode; profiles also call this hook.
         std::shared_ptr<FractalAdjustProController> hub;
         unsigned int index;
-        RGBControllerInterface* rgb = nullptr;
     };
-    static RGBController_Setup Setup(Accessory& accessory);
-    static void UpdateMode(void* object);
-    OpenRGBPluginAPIInterface* api = nullptr;
+    ResourceManagerInterface* api = nullptr;
     std::vector<std::unique_ptr<Accessory>> accessories;
 };

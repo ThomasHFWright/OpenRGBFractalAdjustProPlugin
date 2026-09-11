@@ -1,7 +1,7 @@
 {
     "Id": "org.thomashfwright.FractalAdjustPro",
     "Name": "Fractal Adjust Pro",
-    "OpenRGBPluginAPIVersion": 5,
-    "VersionStr": "0.1.0",
+    "OpenRGBPluginAPIVersion": 4,
+    "VersionStr": "0.2.0",
     "Url": "https://github.com/ThomasHFWright/OpenRGBFractalAdjustProPlugin"
 }

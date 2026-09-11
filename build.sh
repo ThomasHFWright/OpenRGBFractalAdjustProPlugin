@@ -2,9 +2,9 @@
 set -eu
 cd "$(dirname "$0")"
 source_dir=$(realpath "${1:?Usage: ./build.sh /path/to/official/OpenRGB}")
-expected=728846f66861dd1cb7dc04835f651830d6ef13ce
+expected=5e81e26fcc65d3dacfb76b0a30ec0142ec7bb131
 test "$(git -C "$source_dir" rev-parse HEAD)" = "$expected" || {
-    echo "Use official OpenRGB revision $expected (plugin API 5)." >&2
+    echo "Use official OpenRGB revision $expected (release 1.0rc3.1, plugin API 4)." >&2
     exit 1
 }
 mkdir -p build
