@@ -35,6 +35,9 @@ encoder and HID transport are unchanged from v0.1.0.
 | Disable preserves lighting | PASS: exact hardware readback before/after |
 | Graceful close / restart | PASS; no API 5 thread-teardown warnings |
 | Startup effects, rotation, mirroring | Unchanged byte-for-byte |
+| Physical visual check | User confirmed Top Middle red/blue Breathing, Top Front Color Cycle, nine other accessories steady blue |
+| Final Off restoration | PASS: all 11 accessories match the initial Off hardware snapshot exactly; startup, rotation and mirroring unchanged |
+| Installed normal release restarted after restoration | PASS: SDK discovers 11 accessories, all Off |
 
 All traced HID requests/replies were 64 bytes, with matching report/family/command
 and zero status. An allowlist permitted only the discovery and regular RGB
